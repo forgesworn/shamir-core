@@ -5,6 +5,7 @@ import {
   ShamirValidationError,
   ShamirCryptoError,
   splitSecret,
+  reconstructSecret,
   type ShamirShare,
 } from '../src/index.js';
 
@@ -99,6 +100,151 @@ describe('splitSecret', () => {
 
   it('rejects non-integer shares', () => {
     expect(() => splitSecret(secret5, 2, 3.5))
+      .toThrow(ShamirValidationError);
+  });
+});
+
+describe('reconstructSecret', () => {
+  const secret5 = new Uint8Array([72, 101, 108, 108, 111]);
+
+  it('reconstructs with 2-of-3 (shares 1,2)', () => {
+    const shares = splitSecret(secret5, 2, 3);
+    const recovered = reconstructSecret([shares[0]!, shares[1]!], 2);
+    expect(Array.from(recovered)).toEqual(Array.from(secret5));
+  });
+
+  it('reconstructs with 2-of-3 (shares 2,3)', () => {
+    const shares = splitSecret(secret5, 2, 3);
+    const recovered = reconstructSecret([shares[1]!, shares[2]!], 2);
+    expect(Array.from(recovered)).toEqual(Array.from(secret5));
+  });
+
+  it('reconstructs with 2-of-3 (shares 1,3)', () => {
+    const shares = splitSecret(secret5, 2, 3);
+    const recovered = reconstructSecret([shares[0]!, shares[2]!], 2);
+    expect(Array.from(recovered)).toEqual(Array.from(secret5));
+  });
+
+  it('reconstructs with all 3-of-3 shares', () => {
+    const shares = splitSecret(secret5, 2, 3);
+    const recovered = reconstructSecret(shares, 2);
+    expect(Array.from(recovered)).toEqual(Array.from(secret5));
+  });
+
+  it('reconstructs 3-of-5 with non-adjacent shares', () => {
+    const secret = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const shares = splitSecret(secret, 3, 5);
+    const recovered = reconstructSecret([shares[0]!, shares[2]!, shares[4]!], 3);
+    expect(Array.from(recovered)).toEqual(Array.from(secret));
+  });
+
+  it('reconstructs 5-of-5', () => {
+    const secret = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const shares = splitSecret(secret, 5, 5);
+    const recovered = reconstructSecret(shares, 5);
+    expect(Array.from(recovered)).toEqual(Array.from(secret));
+  });
+
+  it('fails to reconstruct below threshold (4-of-5 with 5-of-5 split)', () => {
+    const secret = new Uint8Array([10, 20, 30, 40]);
+    const shares = splitSecret(secret, 5, 5);
+    const partial = reconstructSecret(shares.slice(0, 4), 4);
+    expect(Array.from(partial)).not.toEqual(Array.from(secret));
+  });
+
+  it('reconstructs a 32-byte secret', () => {
+    const secret32 = new Uint8Array(32).map((_, i) => i * 8);
+    const shares = splitSecret(secret32, 3, 5);
+    const recovered = reconstructSecret([shares[1]!, shares[3]!, shares[4]!], 3);
+    expect(Array.from(recovered)).toEqual(Array.from(secret32));
+  });
+
+  it('reconstructs a secret larger than 255 bytes', () => {
+    const big = new Uint8Array(512).map((_, i) => i & 0xff);
+    const shares = splitSecret(big, 2, 3);
+    const recovered = reconstructSecret([shares[0]!, shares[2]!], 2);
+    expect(Array.from(recovered)).toEqual(Array.from(big));
+  });
+
+  it('handles all-zero secret', () => {
+    const secret = new Uint8Array(8).fill(0);
+    const shares = splitSecret(secret, 2, 3);
+    const recovered = reconstructSecret([shares[0]!, shares[2]!], 2);
+    expect(Array.from(recovered)).toEqual(Array.from(secret));
+  });
+
+  it('handles all-0xFF secret', () => {
+    const secret = new Uint8Array(8).fill(0xff);
+    const shares = splitSecret(secret, 2, 3);
+    const recovered = reconstructSecret([shares[1]!, shares[2]!], 2);
+    expect(Array.from(recovered)).toEqual(Array.from(secret));
+  });
+
+  it('handles zero bytes interspersed', () => {
+    const secret = new Uint8Array([0, 0, 0, 255, 0]);
+    const shares = splitSecret(secret, 2, 3);
+    const recovered = reconstructSecret([shares[0]!, shares[2]!], 2);
+    expect(Array.from(recovered)).toEqual(Array.from(secret));
+  });
+
+  it('handles single-byte secret', () => {
+    const secret = new Uint8Array([42]);
+    const shares = splitSecret(secret, 2, 3);
+    const recovered = reconstructSecret([shares[0]!, shares[2]!], 2);
+    expect(Array.from(recovered)).toEqual([42]);
+  });
+
+  it('rejects threshold < 2', () => {
+    const shares = splitSecret(secret5, 2, 3);
+    expect(() => reconstructSecret(shares, 1))
+      .toThrow(ShamirValidationError);
+  });
+
+  it('rejects fewer shares than threshold', () => {
+    const shares = splitSecret(secret5, 3, 5);
+    expect(() => reconstructSecret([shares[0]!], 3))
+      .toThrow(ShamirValidationError);
+  });
+
+  it('rejects duplicate share IDs', () => {
+    const share1: ShamirShare = { id: 1, threshold: 2, data: new Uint8Array([10]) };
+    const share2: ShamirShare = { id: 1, threshold: 2, data: new Uint8Array([20]) };
+    expect(() => reconstructSecret([share1, share2], 2))
+      .toThrow(ShamirValidationError);
+  });
+
+  it('rejects share ID 0', () => {
+    const share1: ShamirShare = { id: 0, threshold: 2, data: new Uint8Array([10]) };
+    const share2: ShamirShare = { id: 2, threshold: 2, data: new Uint8Array([20]) };
+    expect(() => reconstructSecret([share1, share2], 2))
+      .toThrow(ShamirValidationError);
+  });
+
+  it('rejects share ID > 255', () => {
+    const share1: ShamirShare = { id: 1, threshold: 2, data: new Uint8Array([10]) };
+    const share2: ShamirShare = { id: 300, threshold: 2, data: new Uint8Array([20]) };
+    expect(() => reconstructSecret([share1, share2], 2))
+      .toThrow(ShamirValidationError);
+  });
+
+  it('rejects mismatched share data lengths', () => {
+    const share1: ShamirShare = { id: 1, threshold: 2, data: new Uint8Array([1, 2, 3]) };
+    const share2: ShamirShare = { id: 2, threshold: 2, data: new Uint8Array([4, 5]) };
+    expect(() => reconstructSecret([share1, share2], 2))
+      .toThrow(ShamirValidationError);
+  });
+
+  it('rejects empty share data', () => {
+    const share1: ShamirShare = { id: 1, threshold: 2, data: new Uint8Array(0) };
+    const share2: ShamirShare = { id: 2, threshold: 2, data: new Uint8Array(0) };
+    expect(() => reconstructSecret([share1, share2], 2))
+      .toThrow(ShamirValidationError);
+  });
+
+  it('rejects mismatched threshold in share metadata', () => {
+    const share1: ShamirShare = { id: 1, threshold: 2, data: new Uint8Array([10]) };
+    const share2: ShamirShare = { id: 2, threshold: 3, data: new Uint8Array([20]) };
+    expect(() => reconstructSecret([share1, share2], 2))
       .toThrow(ShamirValidationError);
   });
 });

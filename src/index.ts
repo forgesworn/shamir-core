@@ -176,3 +176,89 @@ export function splitSecret(
 
   return result;
 }
+
+/**
+ * Reconstruct a secret from shares using Lagrange interpolation over GF(256).
+ *
+ * @param shares    Array of shares (at least `threshold` shares)
+ * @param threshold The threshold used during splitting
+ * @returns The reconstructed secret bytes
+ */
+export function reconstructSecret(
+  shares: ShamirShare[],
+  threshold: number,
+): Uint8Array {
+  if (!Number.isSafeInteger(threshold) || threshold < 2) {
+    throw new ShamirValidationError('Threshold must be an integer >= 2');
+  }
+  if (!Array.isArray(shares) || shares.length < threshold) {
+    throw new ShamirValidationError(
+      `Need at least ${threshold} shares, got ${Array.isArray(shares) ? shares.length : 0}`,
+    );
+  }
+
+  // Use only the first `threshold` shares
+  const used = shares.slice(0, threshold);
+
+  // Validate share structure
+  const ids = new Set<number>();
+  let firstThreshold: number | undefined;
+  for (const share of used) {
+    if (!share || typeof share !== 'object') {
+      throw new ShamirValidationError('Each share must be an object with id and data properties');
+    }
+    if (!Number.isInteger(share.id) || share.id < 1 || share.id > 255) {
+      throw new ShamirValidationError('Invalid share ID: must be an integer in [1, 255]');
+    }
+    if (!(share.data instanceof Uint8Array)) {
+      throw new ShamirValidationError('Share data must be a Uint8Array');
+    }
+    if (ids.has(share.id)) {
+      throw new ShamirValidationError('Duplicate share IDs detected — each share must have a unique ID');
+    }
+    if (firstThreshold === undefined) {
+      firstThreshold = share.threshold;
+    } else if (share.threshold !== firstThreshold) {
+      throw new ShamirValidationError(
+        'Inconsistent threshold metadata across shares — shares may be from different splits',
+      );
+    }
+    ids.add(share.id);
+  }
+
+  const secretLen = used[0]!.data.length;
+  if (secretLen === 0) {
+    throw new ShamirValidationError('Share data must not be empty');
+  }
+  for (const share of used) {
+    if (share.data.length !== secretLen) {
+      throw new ShamirValidationError('Inconsistent share lengths — shares may be from different secrets');
+    }
+  }
+
+  const result = new Uint8Array(secretLen);
+
+  // Lagrange interpolation at x = 0 for each byte position
+  for (let byteIdx = 0; byteIdx < secretLen; byteIdx++) {
+    let value = 0;
+
+    for (let i = 0; i < threshold; i++) {
+      const xi = used[i]!.id;
+      const yi = used[i]!.data[byteIdx]!;
+
+      // Lagrange basis l_i(0) = product of x_j / (x_i ^ x_j) for j != i
+      let basis = 1;
+      for (let j = 0; j < threshold; j++) {
+        if (i === j) continue;
+        const xj = used[j]!.id;
+        basis = gf256Mul(basis, gf256Mul(xj, gf256Inv(gf256Add(xi, xj))));
+      }
+
+      value = gf256Add(value, gf256Mul(yi, basis));
+    }
+
+    result[byteIdx] = value;
+  }
+
+  return result;
+}
