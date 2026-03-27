@@ -1,0 +1,66 @@
+{
+  "name": "@forgesworn/shamir-core",
+  "version": "0.0.0-development",
+  "description": "GF(256) Shamir's Secret Sharing — split and reconstruct secrets with threshold schemes",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "shamir",
+    "secret-sharing",
+    "gf256",
+    "threshold",
+    "cryptography",
+    "key-splitting",
+    "galois-field"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "author": "ForgeSworn (https://github.com/forgesworn)",
+  "contributors": [
+    "TheCryptoDonkey (https://github.com/TheCryptoDonkey)",
+    "decented (https://github.com/decented)"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "homepage": "https://github.com/forgesworn/shamir-core",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/forgesworn/shamir-core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/forgesworn/shamir-core/issues"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "semantic-release": "^25.0.3",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
+  },
+  "funding": {
+    "type": "lightning",
+    "url": "lightning:thedonkey@strike.me"
+  }
+}
