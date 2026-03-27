@@ -78,6 +78,11 @@ describe('splitSecret', () => {
       .toThrow(ShamirValidationError);
   });
 
+  it('rejects threshold > 255', () => {
+    expect(() => splitSecret(secret5, 256, 256))
+      .toThrow(ShamirValidationError);
+  });
+
   it('rejects shares < threshold', () => {
     expect(() => splitSecret(secret5, 3, 2))
       .toThrow(ShamirValidationError);
@@ -145,11 +150,12 @@ describe('reconstructSecret', () => {
     expect(Array.from(recovered)).toEqual(Array.from(secret));
   });
 
-  it('fails to reconstruct below threshold (4-of-5 with 5-of-5 split)', () => {
+  it('rejects below-threshold reconstruction when metadata is present', () => {
     const secret = new Uint8Array([10, 20, 30, 40]);
     const shares = splitSecret(secret, 5, 5);
-    const partial = reconstructSecret(shares.slice(0, 4), 4);
-    expect(Array.from(partial)).not.toEqual(Array.from(secret));
+    // shares have threshold=5 in metadata, caller passes 4 -- should throw
+    expect(() => reconstructSecret(shares.slice(0, 4), 4))
+      .toThrow('does not match supplied threshold');
   });
 
   it('reconstructs a 32-byte secret', () => {
@@ -246,5 +252,19 @@ describe('reconstructSecret', () => {
     const share2: ShamirShare = { id: 2, threshold: 3, data: new Uint8Array([20]) };
     expect(() => reconstructSecret([share1, share2], 2))
       .toThrow(ShamirValidationError);
+  });
+
+  it('rejects caller threshold that does not match share metadata', () => {
+    const shares = splitSecret(new Uint8Array([42]), 3, 5);
+    // shares have threshold=3, but caller passes threshold=2
+    expect(() => reconstructSecret([shares[0]!, shares[1]!], 2))
+      .toThrow('does not match supplied threshold');
+  });
+
+  it('reconstructs with non-sequential share order', () => {
+    const secret = new Uint8Array([1, 2, 3, 4]);
+    const shares = splitSecret(secret, 3, 5);
+    const recovered = reconstructSecret([shares[3]!, shares[1]!, shares[0]!], 3);
+    expect(Array.from(recovered)).toEqual(Array.from(secret));
   });
 });
