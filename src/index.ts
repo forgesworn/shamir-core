@@ -112,3 +112,67 @@ function evalPoly(coeffs: Uint8Array, x: number): number {
 function zeroBytes(arr: Uint8Array): void {
   arr.fill(0);
 }
+
+// ---------------------------------------------------------------------------
+// Shamir's Secret Sharing
+// ---------------------------------------------------------------------------
+
+/**
+ * Split a secret into shares using Shamir's Secret Sharing over GF(256).
+ *
+ * @param secret    The secret bytes to split (any length)
+ * @param threshold Minimum shares needed to reconstruct (>= 2)
+ * @param shares    Total number of shares to create (>= threshold, <= 255)
+ * @returns Array of ShamirShare objects
+ */
+export function splitSecret(
+  secret: Uint8Array,
+  threshold: number,
+  shares: number,
+): ShamirShare[] {
+  if (!(secret instanceof Uint8Array)) {
+    throw new ShamirValidationError('Secret must be a Uint8Array');
+  }
+  if (secret.length === 0) {
+    throw new ShamirValidationError('Secret must not be empty');
+  }
+  if (!Number.isSafeInteger(threshold) || !Number.isSafeInteger(shares)) {
+    throw new ShamirValidationError('Threshold and shares must be safe integers');
+  }
+  if (threshold < 2) {
+    throw new ShamirValidationError('Threshold must be at least 2');
+  }
+  if (shares < threshold) {
+    throw new ShamirValidationError('Number of shares must be >= threshold');
+  }
+  if (shares > 255) {
+    throw new ShamirValidationError('Number of shares must be <= 255');
+  }
+
+  const secretLen = secret.length;
+  const result: ShamirShare[] = [];
+
+  for (let i = 0; i < shares; i++) {
+    result.push({ id: i + 1, threshold, data: new Uint8Array(secretLen) });
+  }
+
+  for (let byteIdx = 0; byteIdx < secretLen; byteIdx++) {
+    const coeffs = new Uint8Array(threshold);
+    coeffs[0] = secret[byteIdx]!;
+
+    const rand = new Uint8Array(threshold - 1);
+    crypto.getRandomValues(rand);
+    for (let j = 1; j < threshold; j++) {
+      coeffs[j] = rand[j - 1]!;
+    }
+
+    for (let i = 0; i < shares; i++) {
+      result[i]!.data[byteIdx] = evalPoly(coeffs, i + 1);
+    }
+
+    zeroBytes(coeffs);
+    zeroBytes(rand);
+  }
+
+  return result;
+}
