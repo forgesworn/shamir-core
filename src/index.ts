@@ -139,8 +139,8 @@ export function splitSecret(
   if (!Number.isSafeInteger(threshold) || !Number.isSafeInteger(shares)) {
     throw new ShamirValidationError('Threshold and shares must be safe integers');
   }
-  if (threshold < 2) {
-    throw new ShamirValidationError('Threshold must be at least 2');
+  if (threshold < 2 || threshold > 255) {
+    throw new ShamirValidationError('Threshold must be in [2, 255]');
   }
   if (shares < threshold) {
     throw new ShamirValidationError('Number of shares must be >= threshold');
@@ -158,20 +158,21 @@ export function splitSecret(
 
   for (let byteIdx = 0; byteIdx < secretLen; byteIdx++) {
     const coeffs = new Uint8Array(threshold);
-    coeffs[0] = secret[byteIdx]!;
-
     const rand = new Uint8Array(threshold - 1);
-    crypto.getRandomValues(rand);
-    for (let j = 1; j < threshold; j++) {
-      coeffs[j] = rand[j - 1]!;
-    }
+    try {
+      coeffs[0] = secret[byteIdx]!;
+      crypto.getRandomValues(rand);
+      for (let j = 1; j < threshold; j++) {
+        coeffs[j] = rand[j - 1]!;
+      }
 
-    for (let i = 0; i < shares; i++) {
-      result[i]!.data[byteIdx] = evalPoly(coeffs, i + 1);
+      for (let i = 0; i < shares; i++) {
+        result[i]!.data[byteIdx] = evalPoly(coeffs, i + 1);
+      }
+    } finally {
+      zeroBytes(coeffs);
+      zeroBytes(rand);
     }
-
-    zeroBytes(coeffs);
-    zeroBytes(rand);
   }
 
   return result;
@@ -197,33 +198,36 @@ export function reconstructSecret(
     );
   }
 
-  // Use only the first `threshold` shares
-  const used = shares.slice(0, threshold);
+  // Snapshot share properties to prevent TOCTOU via Proxy/getter objects
+  const raw = shares.slice(0, threshold);
+  const used: Array<{ id: number; threshold: number; data: Uint8Array }> = [];
 
-  // Validate share structure
   const ids = new Set<number>();
-  let firstThreshold: number | undefined;
-  for (const share of used) {
+  for (const share of raw) {
     if (!share || typeof share !== 'object') {
       throw new ShamirValidationError('Each share must be an object with id and data properties');
     }
-    if (!Number.isInteger(share.id) || share.id < 1 || share.id > 255) {
+    // Snapshot once to prevent getter-based TOCTOU
+    const id = share.id;
+    const shareThreshold = share.threshold;
+    const data = share.data;
+
+    if (!Number.isInteger(id) || id < 1 || id > 255) {
       throw new ShamirValidationError('Invalid share ID: must be an integer in [1, 255]');
     }
-    if (!(share.data instanceof Uint8Array)) {
+    if (!(data instanceof Uint8Array)) {
       throw new ShamirValidationError('Share data must be a Uint8Array');
     }
-    if (ids.has(share.id)) {
+    if (ids.has(id)) {
       throw new ShamirValidationError('Duplicate share IDs detected — each share must have a unique ID');
     }
-    if (firstThreshold === undefined) {
-      firstThreshold = share.threshold;
-    } else if (share.threshold !== firstThreshold) {
+    if (Number.isInteger(shareThreshold) && shareThreshold !== threshold) {
       throw new ShamirValidationError(
-        'Inconsistent threshold metadata across shares — shares may be from different splits',
+        `Share threshold (${shareThreshold}) does not match supplied threshold (${threshold})`,
       );
     }
-    ids.add(share.id);
+    ids.add(id);
+    used.push({ id, threshold: shareThreshold, data });
   }
 
   const secretLen = used[0]!.data.length;
