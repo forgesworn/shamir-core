@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/forgesworn/shamir-core/compare/v1.0.1...v1.0.2) (2026-03-31)
+
+
+### Bug Fixes
+
+* add registry-url to release job for OIDC publishing ([6839fe8](https://github.com/forgesworn/shamir-core/commit/6839fe858bd8d2ed34b79e74fa140a540ceab021))
+
 ## [1.0.1](https://github.com/forgesworn/shamir-core/compare/v1.0.0...v1.0.1) (2026-03-27)
 
 

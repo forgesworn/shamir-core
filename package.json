@@ -1,6 +1,6 @@
 {
   "name": "@forgesworn/shamir-core",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "GF(256) Shamir's Secret Sharing — split and reconstruct secrets with threshold schemes",
   "type": "module",
   "main": "./dist/index.js",
