@@ -1,0 +1,223 @@
+# @forgesworn/shamir-core — Full AI Reference
+
+> GF(256) Shamir's Secret Sharing for TypeScript. Zero runtime dependencies.
+> Version: see package.json. Repository: https://github.com/forgesworn/shamir-core
+
+---
+
+## What It Is
+
+`@forgesworn/shamir-core` implements Shamir's Secret Sharing (SSS) over GF(256) — the 256-element Galois field. It splits any `Uint8Array` into n shares such that any threshold-sized subset can reconstruct the original, and fewer than threshold shares reveal nothing about the secret.
+
+**Use it when:**
+- You need threshold key splitting (e.g. split an encryption key across 5 custodians, require 3)
+- You want a zero-dependency cryptographic primitive with no supply chain risk
+- You need to split secrets of arbitrary byte length
+- You are building a BIP-39 mnemonic share scheme (see `@forgesworn/shamir-words`)
+- You are building epoch-based encrypted access control (see `dominion-protocol`)
+
+**Do not use it when:**
+- You need secret sharing over a large prime field (e.g. for integer secrets requiring >256 parties)
+- You need authenticated encryption of shares — this library provides information-theoretic secrecy but no integrity/authentication of share data; layer HMAC or AEAD on top if you need that
+
+---
+
+## Install
+
+```
+npm install @forgesworn/shamir-core
+```
+
+Requires Node.js >= 18, or any browser/runtime with `crypto.getRandomValues` (Bun, Deno, all modern browsers).
+
+---
+
+## Full API Surface
+
+### splitSecret
+
+```typescript
+function splitSecret(
+  secret: Uint8Array,    // Secret bytes to split (any length, must be non-empty)
+  threshold: number,     // Minimum shares needed to reconstruct — integer in [2, 255]
+  shares: number,        // Total shares to create — integer in [threshold, 255]
+): ShamirShare[]
+```
+
+Splits `secret` into `shares` shares using a random degree-(threshold-1) polynomial over GF(256), evaluated independently for each byte of the secret. The constant term of each polynomial is the secret byte; the remaining threshold-1 coefficients are drawn from `crypto.getRandomValues`.
+
+Returns an array of `ShamirShare` objects with `id` values 1 through `shares`. Polynomial coefficients are zeroed from memory after each byte is processed.
+
+Throws `ShamirValidationError` if parameters are out of range or the secret is empty.
+
+### reconstructSecret
+
+```typescript
+function reconstructSecret(
+  shares: ShamirShare[],  // At least threshold shares from the same split
+  threshold: number,      // The threshold used during splitting — integer >= 2
+): Uint8Array
+```
+
+Reconstructs the secret using Lagrange interpolation at x=0 over GF(256). Only the first `threshold` entries in `shares` are used; extras are silently ignored.
+
+Validates that:
+- There are at least `threshold` shares
+- All share IDs are in [1, 255] and unique
+- All share `data` arrays are the same length
+- If `threshold` metadata is present on shares, it matches the supplied `threshold`
+
+Snapshots share properties on first access to prevent TOCTOU attacks via Proxy objects with side-effecting getters.
+
+Throws `ShamirValidationError` on any validation failure.
+
+### ShamirShare
+
+```typescript
+interface ShamirShare {
+  id: number;        // 1–255 — the x-coordinate in GF(256) (evaluation point)
+  threshold: number; // 2–255 — minimum shares needed; metadata, not used in maths
+  data: Uint8Array;  // Same length as the original secret; the y-value for each byte
+}
+```
+
+### Error Classes
+
+```typescript
+class ShamirError extends Error {}            // Base class
+class ShamirValidationError extends ShamirError {}  // Bad inputs, out-of-range params
+class ShamirCryptoError extends ShamirError {}      // Internal crypto errors (e.g. GF(256) zero inverse)
+```
+
+All error classes are exported and can be caught individually.
+
+---
+
+## GF(256) Implementation Details
+
+The library implements GF(2^8) — the field with 256 elements — using the same irreducible polynomial as AES:
+
+```
+p(x) = x^8 + x^4 + x^3 + x + 1  →  0x11b
+```
+
+**Generator:** 0x03
+
+**Arithmetic:**
+- Addition: XOR (`a ^ b`)
+- Multiplication: log/exp table lookup — O(1), no branching on secret data
+- Inverse: `EXP[(255 - LOG[a]) % 255]`
+
+**Table construction:** Log and exp tables are built once at module load using generator 0x03 with carryless (peasant) multiplication. `EXP[255]` is aliased to `EXP[0]` to simplify modular index arithmetic.
+
+**Polynomial evaluation:** Horner's method — evaluates a degree-(threshold-1) polynomial at a given x using (threshold-1) multiplications and (threshold-1) additions.
+
+**Lagrange interpolation:** Reconstructs f(0) from threshold (x, y) pairs. The basis polynomial for each share is computed as the product of `x_j / (x_i XOR x_j)` for all j != i, all in GF(256).
+
+---
+
+## Security Notes
+
+**Memory zeroing:** Polynomial coefficients (the `coeffs` and `rand` arrays) are zeroed with `Uint8Array.fill(0)` in a `finally` block after each byte is processed. This is defence-in-depth — it does not guarantee the JVM/V8 does not retain copies, but it removes the primary allocation from the live heap.
+
+**Share IDs are 1-indexed:** Valid share IDs are 1–255. Zero is not a valid evaluation point in this scheme because f(0) is the secret itself.
+
+**No authentication:** Shares have no MAC or signature. A tampered share will silently produce a wrong secret, not an error. If you need share integrity, add a HMAC or encrypt shares with an AEAD cipher.
+
+**Threshold metadata:** The `threshold` field on `ShamirShare` is stored for bookkeeping by callers (e.g. `@forgesworn/shamir-words` encodes it in the BIP-39 share). It is validated during `reconstructSecret` but is not mathematically required — the interpolation only needs the `id` and `data`.
+
+**TOCTOU hardening:** `reconstructSecret` snapshots `id`, `threshold`, and `data` from each share object before any validation loop. This prevents a malicious Proxy from returning different values on subsequent reads.
+
+**Randomness:** Relies solely on `crypto.getRandomValues` for coefficient generation. There is no fallback and no seeding — callers cannot influence the randomness.
+
+**No secret length limit:** The library imposes no upper bound on `secret.length`. Consumers may impose their own (e.g. `@forgesworn/shamir-words` limits secret length to what can be BIP-39 encoded).
+
+---
+
+## Code Examples
+
+### Basic split and reconstruct
+
+```typescript
+import { splitSecret, reconstructSecret } from '@forgesworn/shamir-core';
+
+// Split a 32-byte key: 5 shares, any 3 can reconstruct
+const secret = crypto.getRandomValues(new Uint8Array(32));
+const shares = splitSecret(secret, 3, 5);
+
+// shares[0] = { id: 1, threshold: 3, data: Uint8Array(32) }
+// shares[4] = { id: 5, threshold: 3, data: Uint8Array(32) }
+
+// Reconstruct from any 3 shares (can be in any order)
+const recovered = reconstructSecret([shares[1], shares[3], shares[4]], 3);
+// recovered deeply equals secret
+```
+
+### 2-of-2 split (both shares required)
+
+```typescript
+const secret = new TextEncoder().encode('hunter2');
+const shares = splitSecret(secret, 2, 2);
+
+// Later:
+const recovered = reconstructSecret([shares[0], shares[1]], 2);
+console.log(new TextDecoder().decode(recovered)); // 'hunter2'
+```
+
+### Catching errors
+
+```typescript
+import {
+  splitSecret,
+  reconstructSecret,
+  ShamirValidationError,
+  ShamirCryptoError,
+} from '@forgesworn/shamir-core';
+
+try {
+  const shares = splitSecret(mySecret, 3, 5);
+  const recovered = reconstructSecret([shares[0], shares[1]], 3); // only 2, needs 3
+} catch (err) {
+  if (err instanceof ShamirValidationError) {
+    console.error('Bad inputs:', err.message);
+  }
+}
+```
+
+### Checking share identity
+
+```typescript
+// Share IDs are 1-indexed. After a 5-share split:
+const shares = splitSecret(secret, 3, 5);
+console.log(shares.map(s => s.id)); // [1, 2, 3, 4, 5]
+
+// Do NOT use index 0 as an ID — it is not a valid evaluation point.
+// The id field on the share is authoritative.
+```
+
+---
+
+## Gotchas
+
+- **Share IDs start at 1, not 0.** The id field on each share is its GF(256) evaluation point. Zero is not used (f(0) is the secret itself). Always use `share.id`, not the array index.
+- **`reconstructSecret` uses only the first `threshold` shares.** If you pass 5 shares with threshold 3, only the first 3 are used. Order matters for which shares are consumed, but not for correctness — any threshold-sized subset of the original shares produces the same secret.
+- **Threshold mismatch is validated.** If the `threshold` field on any share does not match the `threshold` argument, a `ShamirValidationError` is thrown.
+- **Duplicate share IDs are rejected.** Passing two shares with the same `id` throws `ShamirValidationError`.
+- **Inconsistent data lengths are rejected.** All shares passed to `reconstructSecret` must have the same `data.length`.
+- **No authentication.** A corrupted share silently produces a wrong result. Layer integrity checks at the application level.
+
+---
+
+## Ecosystem
+
+| Package | Role |
+|---------|------|
+| `@forgesworn/shamir-core` | This library — raw GF(256) split/reconstruct |
+| `@forgesworn/shamir-words` | BIP-39 word encoding for shares (depends on this package) |
+| `dominion-protocol` | Epoch-based encrypted access control (depends on this package) |
+
+---
+
+## Licence
+
+MIT — https://github.com/forgesworn/shamir-core/blob/main/LICENSE
