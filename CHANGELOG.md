@@ -1,3 +1,11 @@
+## [1.0.3](https://github.com/forgesworn/shamir-core/compare/v1.0.2...v1.0.3) (2026-04-10)
+
+
+### Bug Fixes
+
+* pin release actions to SHA, add .gitignore, remove src/ from npm package ([0546c62](https://github.com/forgesworn/shamir-core/commit/0546c6249809738a988c5f1a1716d37c1faa323c))
+* snapshot share properties, validate threshold metadata, add bounds checks ([ff83413](https://github.com/forgesworn/shamir-core/commit/ff834133080cda261cde46ab28488ac91cf46635))
+
 ## [1.0.2](https://github.com/forgesworn/shamir-core/compare/v1.0.1...v1.0.2) (2026-03-31)
 
 
