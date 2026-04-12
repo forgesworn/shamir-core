@@ -1,5 +1,7 @@
 # @forgesworn/shamir-core
 
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/TheCryptoDonkey?logo=githubsponsors&color=ea4aaa&label=Sponsor)](https://github.com/sponsors/TheCryptoDonkey)
+
 GF(256) Shamir's Secret Sharing for TypeScript. Split a secret into threshold-of-n shares and reconstruct from any threshold-sized subset.
 
 **Zero runtime dependencies.** Pure TypeScript, Web Crypto only.
