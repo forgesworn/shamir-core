@@ -42,6 +42,6 @@ npm run typecheck    # tsc --noEmit
 
 ## Release
 
-- semantic-release on push to main — do NOT manually bump version
-- Commit messages drive versioning: `feat:` → minor, `fix:` → patch, `feat!:` → major
+- Releases via `forgesworn/anvil@v0` (workflow_call) -- do NOT manually bump version
+- Commit messages drive versioning: `feat:` minor, `fix:` patch, `feat!:` major
 - Work on branches, merge to main only when complete
