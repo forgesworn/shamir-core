@@ -2,6 +2,8 @@
 
 > GF(256) Shamir's Secret Sharing for TypeScript. Zero runtime dependencies.
 
+Full reference with more examples and implementation notes: llms-full.txt (shipped in this package, also at https://github.com/forgesworn/shamir-core/blob/main/llms-full.txt).
+
 ## What It Does
 
 Splits a secret (any Uint8Array) into n shares where any threshold-sized subset can reconstruct the original. Uses Shamir's Secret Sharing over GF(256) with Lagrange interpolation.
@@ -9,6 +11,26 @@ Splits a secret (any Uint8Array) into n shares where any threshold-sized subset 
 ## Install
 
 npm install @forgesworn/shamir-core
+
+## Requirements
+
+- Node.js >= 19, or any runtime with a global crypto.getRandomValues (browsers, Deno, Bun). splitSecret uses the global crypto directly. On Node.js 18 it throws a ReferenceError unless Node is started with --experimental-global-webcrypto (workaround, not supported). reconstructSecret does not use crypto.
+- ESM only. require('@forgesworn/shamir-core') fails with ERR_PACKAGE_PATH_NOT_EXPORTED because the exports map has only an import condition. From CommonJS use `await import('@forgesworn/shamir-core')` inside an async function.
+
+## Imports
+
+All exports are named exports of the package entry point. There is no default export.
+
+```typescript
+import {
+  splitSecret,
+  reconstructSecret,
+  ShamirError,
+  ShamirValidationError,
+  ShamirCryptoError,
+  type ShamirShare, // type only
+} from '@forgesworn/shamir-core';
+```
 
 ## API
 
@@ -24,11 +46,13 @@ const shares = splitSecret(new Uint8Array([1, 2, 3]), 2, 3);
 
 ### reconstructSecret(shares: ShamirShare[], threshold: number): Uint8Array
 
-Reconstruct from at least threshold shares. Uses first threshold shares only.
+Reconstruct from at least threshold shares. Uses first threshold shares only; later entries are neither used nor validated.
 
 ```typescript
-import { reconstructSecret } from '@forgesworn/shamir-core';
-const secret = reconstructSecret([shares[0], shares[2]], 2);
+import { splitSecret, reconstructSecret } from '@forgesworn/shamir-core';
+const shares = splitSecret(new Uint8Array([1, 2, 3]), 2, 3);
+const secret = reconstructSecret(shares.filter((s) => s.id !== 2), 2);
+// secret = Uint8Array [1, 2, 3]
 ```
 
 ### ShamirShare
@@ -41,21 +65,35 @@ interface ShamirShare {
 }
 ```
 
+The maths uses only id and data. reconstructSecret checks threshold against its threshold argument only when the share's threshold is an integer; a missing or non-integer value skips the check.
+
 ### Errors
 
-- ShamirError (base)
-- ShamirValidationError extends ShamirError (bad inputs)
-- ShamirCryptoError extends ShamirError (internal crypto)
+- ShamirError (base, never thrown directly)
+- ShamirValidationError extends ShamirError (bad inputs; the only class the public functions currently throw)
+- ShamirCryptoError extends ShamirError (internal GF(256) zero-inverse guard; unreachable through the public API with current validation)
+
+splitSecret throws ShamirValidationError when: secret is not a Uint8Array or is empty; threshold or shares is not a safe integer; threshold is outside 2-255; shares is below threshold or above 255.
+
+reconstructSecret throws ShamirValidationError when, among the first threshold entries: the threshold argument is not an integer >= 2; shares is not an array or has fewer than threshold entries; an entry is not an object; an id is not an integer in 1-255 (id 0 is rejected); data is not a Uint8Array; two ids are equal; an integer threshold on a share differs from the argument; the first entry's data is empty; data lengths differ.
+
+If crypto.getRandomValues is missing, splitSecret throws the runtime's own error, not a Shamir error.
 
 ## Key Properties
 
 - Zero runtime dependencies (only Web Crypto for randomness)
 - GF(256) with log/exp table lookup (same irreducible polynomial as AES: 0x11b)
-- Polynomial coefficients zeroed after use
+- Internal polynomial coefficients and random bytes zeroed after use; the caller's secret, the returned shares and the reconstructed secret are not zeroed by the library
 - Share IDs are 1-indexed (1-255), not 0-indexed
 - No secret length limit
-- Threshold metadata on shares is validated during reconstruction
-- Node.js >= 18, browsers, Deno, Bun
+- Threshold metadata on shares is validated during reconstruction when present as an integer
+- Node.js >= 19, browsers, Deno, Bun
+
+## Security Notes
+
+- No integrity check: a wrong, corrupted or mixed-up share returns wrong bytes without an error. Verify the result at application level.
+- Not constant-time: table lookups are indexed by secret-dependent bytes and multiplication returns early on zero operands.
+- No fallback randomness: only crypto.getRandomValues.
 
 ## Related Packages
 
