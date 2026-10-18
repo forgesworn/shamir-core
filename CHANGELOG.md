@@ -23,6 +23,14 @@
 
 # 1.0.0 (2026-03-27)
 
+## 1.0.5 (2026-10-18)
+
+### Bug Fixes
+
+- set publishConfig.provenance for anvil publishing (#22) (release)
+
+
+
 ## 1.0.4 (2026-10-18)
 
 ### Bug Fixes
