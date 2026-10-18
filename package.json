@@ -33,7 +33,8 @@
     "galois-field"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "sideEffects": false,
   "author": "ForgeSworn (https://github.com/forgesworn)",
