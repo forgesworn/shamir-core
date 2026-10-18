@@ -1,7 +1,7 @@
 {
   "name": "@forgesworn/shamir-core",
   "version": "1.0.3",
-  "description": "GF(256) Shamir's Secret Sharing — split and reconstruct secrets with threshold schemes",
+  "description": "GF(256) Shamir's Secret Sharing: split and reconstruct secrets with threshold schemes",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -43,7 +43,7 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=19"
   },
   "homepage": "https://github.com/forgesworn/shamir-core",
   "repository": {

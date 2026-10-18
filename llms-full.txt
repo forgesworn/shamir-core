@@ -28,7 +28,22 @@
 npm install @forgesworn/shamir-core
 ```
 
-Requires Node.js >= 18, or any browser/runtime with `crypto.getRandomValues` (Bun, Deno, all modern browsers).
+Requires Node.js >= 19, or any browser/runtime with a global `crypto.getRandomValues` (Bun, Deno, all modern browsers). `splitSecret` uses the bare global `crypto`, which Node.js only exposes without a flag from version 19. On Node.js 18 it throws a plain `ReferenceError` (not a Shamir error) unless Node is started with `--experimental-global-webcrypto`, or `globalThis.crypto ??= webcrypto` (from `node:crypto`) runs first. Those are workarounds, not a supported configuration. `reconstructSecret` does not use `crypto`.
+
+The package is ESM only: `package.json` has `"type": "module"` and its `exports` map has only an `import` condition. `require('@forgesworn/shamir-core')` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED` on every Node.js version, including those that can otherwise `require()` ES modules. From CommonJS, call `await import('@forgesworn/shamir-core')` inside an async function.
+
+All exports are named exports of the entry point (no default export):
+
+```typescript
+import {
+  splitSecret,
+  reconstructSecret,
+  ShamirError,
+  ShamirValidationError,
+  ShamirCryptoError,
+  type ShamirShare, // type only, erased at compile time
+} from '@forgesworn/shamir-core';
+```
 
 ---
 
@@ -48,7 +63,14 @@ Splits `secret` into `shares` shares using a random degree-(threshold-1) polynom
 
 Returns an array of `ShamirShare` objects with `id` values 1 through `shares`. Polynomial coefficients are zeroed from memory after each byte is processed.
 
-Throws `ShamirValidationError` if parameters are out of range or the secret is empty.
+Throws `ShamirValidationError` when:
+- `secret` is not a `Uint8Array` (a Node.js `Buffer` is accepted)
+- `secret` is empty
+- `threshold` or `shares` is not a safe integer
+- `threshold` is outside [2, 255]
+- `shares` is less than `threshold` or greater than 255
+
+If `crypto.getRandomValues` is unavailable it throws whatever the runtime raises, not a Shamir error. It does not modify `secret`, and it does not zero `secret` or the returned shares.
 
 ### reconstructSecret
 
@@ -61,15 +83,20 @@ function reconstructSecret(
 
 Reconstructs the secret using Lagrange interpolation at x=0 over GF(256). Only the first `threshold` entries in `shares` are used; extras are silently ignored.
 
-Validates that:
-- There are at least `threshold` shares
-- All share IDs are in [1, 255] and unique
-- All share `data` arrays are the same length
-- If `threshold` metadata is present on shares, it matches the supplied `threshold`
+Only the first `threshold` entries are validated or used; later entries are ignored even if malformed. It throws `ShamirValidationError` when:
+- the `threshold` argument is not a safe integer of at least 2
+- `shares` is not an array, or has fewer than `threshold` entries (too few shares)
+- any of the first `threshold` entries is not an object
+- an entry's `id` is not an integer in [1, 255] (so id 0 is rejected)
+- an entry's `data` is not a `Uint8Array`
+- two entries have the same `id` (duplicate IDs)
+- an entry's `threshold` is an integer that differs from the `threshold` argument (a missing or non-integer value skips this check)
+- the first entry's `data` is empty
+- the entries' `data` arrays have different lengths
 
-Snapshots share properties on first access to prevent TOCTOU attacks via Proxy objects with side-effecting getters.
+Each share's `id`, `threshold` and `data` are read once and only those snapshotted values are validated and used, which prevents TOCTOU attacks via Proxy objects with side-effecting getters.
 
-Throws `ShamirValidationError` on any validation failure.
+It does not zero anything: it reads the share `data` arrays in place and returns a new array that the caller owns.
 
 ### ShamirShare
 
@@ -84,12 +111,12 @@ interface ShamirShare {
 ### Error Classes
 
 ```typescript
-class ShamirError extends Error {}            // Base class
+class ShamirError extends Error {}            // Base class, never thrown directly
 class ShamirValidationError extends ShamirError {}  // Bad inputs, out-of-range params
-class ShamirCryptoError extends ShamirError {}      // Internal crypto errors (e.g. GF(256) zero inverse)
+class ShamirCryptoError extends ShamirError {}      // Internal GF(256) zero-inverse guard
 ```
 
-All error classes are exported and can be caught individually.
+All error classes are exported and can be caught individually. Every deliberate throw from `splitSecret` and `reconstructSecret` is currently a `ShamirValidationError`. `ShamirCryptoError` is thrown only by the internal inverse of zero in GF(256); the duplicate-ID and ID-range checks make that unreachable through the public API as currently implemented, so it exists as a guard that callers can catch. Catching `ShamirError` covers both.
 
 ---
 
@@ -105,7 +132,7 @@ p(x) = x^8 + x^4 + x^3 + x + 1  →  0x11b
 
 **Arithmetic:**
 - Addition: XOR (`a ^ b`)
-- Multiplication: log/exp table lookup — O(1), no branching on secret data
+- Multiplication: log/exp table lookup, O(1). It is not constant-time: it returns early when an operand is zero and the table indices depend on secret bytes
 - Inverse: `EXP[(255 - LOG[a]) % 255]`
 
 **Table construction:** Log and exp tables are built once at module load using generator 0x03 with carryless (peasant) multiplication. `EXP[255]` is aliased to `EXP[0]` to simplify modular index arithmetic.
@@ -118,15 +145,19 @@ p(x) = x^8 + x^4 + x^3 + x + 1  →  0x11b
 
 ## Security Notes
 
-**Memory zeroing:** Polynomial coefficients (the `coeffs` and `rand` arrays) are zeroed with `Uint8Array.fill(0)` in a `finally` block after each byte is processed. This is defence-in-depth — it does not guarantee the JVM/V8 does not retain copies, but it removes the primary allocation from the live heap.
+**Memory zeroing:** Polynomial coefficients (the `coeffs` and `rand` arrays) are zeroed with `Uint8Array.fill(0)` in a `finally` block after each byte is processed. This is defence-in-depth and is partial. It does not guarantee the JavaScript engine retains no other copies, and numeric intermediates cannot be zeroed. The library does not zero the caller's `secret`, the `data` of the shares `splitSecret` returns, or the array `reconstructSecret` returns; call `.fill(0)` on those when finished.
+
+**Not constant-time:** GF(256) multiplication uses log/exp table lookups indexed by secret-dependent bytes and returns early when an operand is zero. Timing and cache side channels are possible, and JavaScript runtimes give no constant-time guarantee in any case.
 
 **Share IDs are 1-indexed:** Valid share IDs are 1–255. Zero is not a valid evaluation point in this scheme because f(0) is the secret itself.
 
-**No authentication:** Shares have no MAC or signature. A tampered share will silently produce a wrong secret, not an error. If you need share integrity, add a HMAC or encrypt shares with an AEAD cipher.
+**No authentication:** Shares have no MAC or signature. A tampered share, shares from different splits, or a too-low `threshold` argument on shares without `threshold` metadata will silently produce a wrong secret, not an error. If you need share integrity, add a HMAC or encrypt shares with an AEAD cipher, and verify the reconstructed secret.
 
-**Threshold metadata:** The `threshold` field on `ShamirShare` is stored for bookkeeping by callers (e.g. `@forgesworn/shamir-words` encodes it in the BIP-39 share). It is validated during `reconstructSecret` but is not mathematically required — the interpolation only needs the `id` and `data`.
+**Threshold metadata:** The `threshold` field on `ShamirShare` is stored for bookkeeping by callers (e.g. `@forgesworn/shamir-words` encodes it in the BIP-39 share). It is not mathematically required: the interpolation only needs the `id` and `data`. `reconstructSecret` does compare it with its `threshold` argument, but only when the share's value is an integer. A missing or non-integer value skips the check.
 
-**TOCTOU hardening:** `reconstructSecret` snapshots `id`, `threshold`, and `data` from each share object before any validation loop. This prevents a malicious Proxy from returning different values on subsequent reads.
+**TOCTOU hardening:** `reconstructSecret` reads `id`, `threshold`, and `data` once from each share object and validates and uses only those snapshotted values. This prevents a malicious Proxy from returning different values on subsequent reads.
+
+**What a share reveals:** `data` has the same length as the secret, and `id` and `threshold` are stored in the clear.
 
 **Randomness:** Relies solely on `crypto.getRandomValues` for coefficient generation. There is no fallback and no seeding — callers cannot influence the randomness.
 
@@ -148,19 +179,22 @@ const shares = splitSecret(secret, 3, 5);
 // shares[0] = { id: 1, threshold: 3, data: Uint8Array(32) }
 // shares[4] = { id: 5, threshold: 3, data: Uint8Array(32) }
 
-// Reconstruct from any 3 shares (can be in any order)
-const recovered = reconstructSecret([shares[1], shares[3], shares[4]], 3);
-// recovered deeply equals secret
+// Reconstruct from shares 2, 4 and 5 (any 3 shares, in any order)
+const subset = shares.filter((share) => [2, 4, 5].includes(share.id));
+const recovered = reconstructSecret(subset, 3);
+// recovered holds the same bytes as secret
 ```
 
 ### 2-of-2 split (both shares required)
 
 ```typescript
+import { splitSecret, reconstructSecret } from '@forgesworn/shamir-core';
+
 const secret = new TextEncoder().encode('hunter2');
 const shares = splitSecret(secret, 2, 2);
 
 // Later:
-const recovered = reconstructSecret([shares[0], shares[1]], 2);
+const recovered = reconstructSecret(shares, 2);
 console.log(new TextDecoder().decode(recovered)); // 'hunter2'
 ```
 
@@ -170,16 +204,22 @@ console.log(new TextDecoder().decode(recovered)); // 'hunter2'
 import {
   splitSecret,
   reconstructSecret,
+  ShamirError,
   ShamirValidationError,
-  ShamirCryptoError,
 } from '@forgesworn/shamir-core';
+
+const mySecret = new Uint8Array([1, 2, 3]);
 
 try {
   const shares = splitSecret(mySecret, 3, 5);
-  const recovered = reconstructSecret([shares[0], shares[1]], 3); // only 2, needs 3
+  const recovered = reconstructSecret(shares.slice(0, 2), 3); // only 2, needs 3
 } catch (err) {
   if (err instanceof ShamirValidationError) {
     console.error('Bad inputs:', err.message);
+  } else if (err instanceof ShamirError) {
+    console.error('Library error:', err.message); // ShamirCryptoError is not expected here
+  } else {
+    throw err; // for example a missing global crypto on Node.js 18
   }
 }
 ```
@@ -187,7 +227,10 @@ try {
 ### Checking share identity
 
 ```typescript
+import { splitSecret } from '@forgesworn/shamir-core';
+
 // Share IDs are 1-indexed. After a 5-share split:
+const secret = new Uint8Array([1, 2, 3]);
 const shares = splitSecret(secret, 3, 5);
 console.log(shares.map(s => s.id)); // [1, 2, 3, 4, 5]
 
@@ -201,10 +244,13 @@ console.log(shares.map(s => s.id)); // [1, 2, 3, 4, 5]
 
 - **Share IDs start at 1, not 0.** The id field on each share is its GF(256) evaluation point. Zero is not used (f(0) is the secret itself). Always use `share.id`, not the array index.
 - **`reconstructSecret` uses only the first `threshold` shares.** If you pass 5 shares with threshold 3, only the first 3 are used. Order matters for which shares are consumed, but not for correctness — any threshold-sized subset of the original shares produces the same secret.
-- **Threshold mismatch is validated.** If the `threshold` field on any share does not match the `threshold` argument, a `ShamirValidationError` is thrown.
+- **Threshold mismatch is validated when the share carries a threshold.** If the integer `threshold` field on any of the first `threshold` shares does not match the `threshold` argument, a `ShamirValidationError` is thrown. A share with a missing or non-integer `threshold` skips the check, so a wrong `threshold` argument then silently returns wrong bytes.
+- **Only the first `threshold` shares are validated.** Later entries are ignored even if malformed.
 - **Duplicate share IDs are rejected.** Passing two shares with the same `id` throws `ShamirValidationError`.
-- **Inconsistent data lengths are rejected.** All shares passed to `reconstructSecret` must have the same `data.length`.
+- **Inconsistent or empty data is rejected.** All shares used by `reconstructSecret` must have the same non-zero `data.length`.
 - **No authentication.** A corrupted share silently produces a wrong result. Layer integrity checks at the application level.
+- **Zeroing is the caller's job** for the secret, the shares and the reconstructed result.
+- **ESM only, and Node.js >= 19.** `require()` fails and Node.js 18 has no global `crypto` without a flag.
 
 ---
 
