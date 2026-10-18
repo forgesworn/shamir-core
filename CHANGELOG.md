@@ -23,6 +23,14 @@
 
 # 1.0.0 (2026-03-27)
 
+## 1.0.4 (2026-10-18)
+
+### Bug Fixes
+
+- align docs with source on Node floor, ESM, errors and security (#21) (docs)
+
+
+
 
 ### Bug Fixes
 
