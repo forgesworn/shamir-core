@@ -4,6 +4,12 @@
 
 Full reference with more examples and implementation notes: llms-full.txt (shipped in this package, also at https://github.com/forgesworn/shamir-core/blob/main/llms-full.txt).
 
+## ForgeSworn ecosystem
+
+- [ForgeSworn library guide](https://forgesworn.dev/llms.txt): Find related libraries, tools and integration guides by task and runtime.
+- [ForgeSworn on GitHub](https://github.com/forgesworn): Browse the organisation’s public repositories.
+- [Project source](https://github.com/forgesworn/shamir-core): Canonical source repository, documentation and release information.
+
 ## What It Does
 
 Splits a secret (any Uint8Array) into n shares where any threshold-sized subset can reconstruct the original. Uses Shamir's Secret Sharing over GF(256) with Lagrange interpolation.
